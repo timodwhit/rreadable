@@ -21,24 +21,28 @@
  * On:
  *  - every week ON Thursday, Fri, Sat
  *  - Every 3rd year on the 1st, 100th and 200th day
- * @param  [type] $rrule_parts [description]
- * @return [type]              [description]
  */
 
 function rreadable_rrule_output($rrule) {
   if (empty($rrule)) {
     return '';
   }
+  module_load_include('inc', 'date_api', 'date_api_ical');
+  module_load_include('inc', 'date_repeat', 'date_repeat_calc');
+
   $date_format = 'M d, Y';
   $parts = rreadable_rrule_parts($rrule);
-  drupal_alter('rreadable_rrule_parts');
+  drupal_alter('rreadable_rrule_parts', $parts);
   $noun = ($parts['freq'] == 'DAILY') ? 'day' : strtolower(str_replace('LY', '', $parts['freq']));
   $desc = rreadable_rrule_process($parts, $date_format, $noun);
   $desc['!interval'] = strtolower($desc['!interval']);
-  drupal_alter('rreadable_desc', $data);
+  drupal_alter('rreadable_desc', $desc);
   return  t('Repeats !interval !by !count', $desc);
 }
 
+/**
+ * Function to process the rrules.
+ */
 function rreadable_rrule_process($rrule_parts, $date_format, $noun) {
   $desc = rreadable_rrule_desc_array();
   $desc['!interval'] = rreadable_interval_handling($rrule_parts, $noun);
