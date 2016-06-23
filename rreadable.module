@@ -1,0 +1,355 @@
+<?php
+/**
+ * @file
+ * File for Rreadable.
+ */
+
+/**
+ * RRules are complicated.
+ *
+ * To get them to process we are going to break them into parts.
+ *
+ * Interval:
+ * This takes shape in phrases such as
+ *  - Daily, Weekly, Monthly, etc.
+ *  - Every other day, every other week, etc.
+ *  - Every 3 days, every 7 weeks, etc.
+ *  - Every 20th Monday of the year
+ *  - Monday of week number 20
+ *  - Every Thursday in March
+ *
+ * On:
+ *  - every week ON Thursday, Fri, Sat
+ *  - Every 3rd year on the 1st, 100th and 200th day
+ * @param  [type] $rrule_parts [description]
+ * @return [type]              [description]
+ */
+
+function rreadable_rrule_output($rrule) {
+  if (empty($rrule)) {
+    return '';
+  }
+  $date_format = 'M d, Y';
+  $parts = rreadable_rrule_parts($rrule);
+  drupal_alter('rreadable_rrule_parts');
+  $noun = ($parts['freq'] == 'DAILY') ? 'day' : strtolower(str_replace('LY', '', $parts['freq']));
+  $desc = rreadable_rrule_process($parts, $date_format, $noun);
+  $desc['!interval'] = strtolower($desc['!interval']);
+  drupal_alter('rreadable_desc', $data);
+  return  t('Repeats !interval !by !count', $desc);
+}
+
+function rreadable_rrule_process($rrule_parts, $date_format, $noun) {
+  $desc = rreadable_rrule_desc_array();
+  $desc['!interval'] = rreadable_interval_handling($rrule_parts, $noun);
+
+  $desc['!count'] = rreadable_count_handling($rrule_parts, $date_format);
+
+  if (!empty($rrule_parts['byday'])) {
+    $desc['!by'][] = rreadable_byday_handling($rrule_parts['byday']);
+  }
+  if (!empty($rrule_parts['byweekno'])) {
+    $desc['!by'][] = rreadable_byweekno_handling($rrule_parts['byweekno']);
+  }
+  if (!empty($rrule_parts['bymonthday'])) {
+    $desc['!by'][] = rreadable_bymonthday_handling($rrule_parts['bymonthday']);
+  }
+  if (!empty($rrule_parts['bymonth'])) {
+    $desc['!by'][] = rreadable_bymonth_handling($rrule_parts['bymonth']);
+  }
+  if (!empty($rrule_parts['byyearday'])) {
+    $desc['!by'][] = rreadable_byyearday_handling($rrule_parts['byyearday']);
+  }
+  if (!empty($desc['!by'])) {
+    $desc['!by'] = implode(' ', $desc['!by']);
+  }
+
+  return $desc;
+}
+
+/**
+ * Return an array with standardized keys.
+ */
+function rreadable_rrule_parts($rrule) {
+  $split = date_repeat_split_rrule($rrule);
+  $parts = array(
+    'freq' => !(empty($split[0]['FREQ'])) ? $split[0]['FREQ'] : '',
+    'interval' => !(empty($split[0]['INTERVAL'])) ? $split[0]['INTERVAL'] : '',
+    'count' =>  !(empty($split[0]['COUNT'])) ? $split[0]['COUNT'] : '',
+    'until' => !(empty($split[0]['UNTIL'])) ? $split[0]['UNTIL'] : '',
+    'byday' => !(empty($split[0]['BYDAY'])) ? $split[0]['BYDAY'] : '',
+    'bymonth' => !(empty($split[0]['BYMONTH'])) ? $split[0]['BYMONTH'] : '',
+    'bywk' => !(empty($split[0]['BYWK'])) ? $split[0]['BYWK'] : '',
+    'bymonthday' => !(empty($split[0]['BYMONTHDAY'])) ? $split[0]['BYMONTHDAY'] : '',
+    'byyearday' => !(empty($split[0]['BYYEARDAY'])) ? $split[0]['BYYEARDAY'] : '',
+    'byweekno' => !(empty($split[0]['BYWEEKNO'])) ? $split[0]['BYWEEKNO'] : '',
+  );
+  return $parts;
+}
+
+/**
+ * Return the proper full day from abbreviation.
+ *
+ * This function also handles the ordinality of days. So 2nd to last
+ * monday, which is represented as -2MO, or 2nd Monday which is represented as
+ * 2MO.
+ */
+function rreadable_day_to_time($abbreviation) {
+  $key = array(
+    'SU' => 'Sunday',
+    'MO' => 'Monday',
+    'TU' => 'Tuesday',
+    'WE' => 'Wednesday',
+    'TH' => 'Thursday',
+    'FR' => 'Friday',
+    'SA' => 'Saturday'
+  );
+  // The day of the week can also have a numeral in front of it.
+  $text_abbrev = substr($abbreviation, -2);
+  // Grab the day out of the key and set it.
+  $day = $key[$text_abbrev];
+  // Separate the number from the abbreviation to process it.
+  $num = str_replace($text_abbrev, '', $abbreviation);
+  if (!empty($num)) {
+    // Process the suffix, so it would read: 1st Monday, of 2nd to last Tuesday.
+    $time = rreadable_suffix_handling($num);
+    $day = "the $time $day";
+  }
+
+  return $day;
+}
+
+/**
+ * Set up the generic array to pass to the t() function.
+ */
+function rreadable_rrule_desc_array() {
+  return array(
+    '!interval' => '',
+    '!count' => '',
+    '!by' => '',
+  );
+}
+
+/**
+ * Parses the INTERVAL in the rrule
+ */
+function rreadable_interval_handling($rrule_parts, $noun = 'day') {
+  $nounly = ($noun == 'day') ? 'Daily' : $noun . 'ly';
+  switch ($rrule_parts['interval']) {
+    case 1:
+      // Ex: Daily.
+      $int_text = t($nounly);
+      break;
+    case 2:
+      // Ex: Every other day.
+      $int_text = t('Every other @noun', array('@noun' => $noun));
+      break;
+    default:
+      // Ex: Every 5 days.
+      $int_text = t('Every @interval @nouns', array('@interval' => $rrule_parts['interval'], '@noun' => $noun));
+      break;
+  }
+  if (empty($rrule_parts['interval'])) {
+    $int_text = $nounly;
+  }
+  return $int_text;
+}
+
+/**
+ * Parses the COUNT in the rrule.
+ */
+function rreadable_count_handling($rrule_parts, $date_format) {
+  if (!empty($rrule_parts['count'])) {
+    // 5 occurrences.
+    $plural_occurrences = format_plural($rrule_parts['count'], 'occurrences', 'occurrences');
+    $count = t('for @count ' . $plural_occurrences, array('@count' => $rrule_parts['count']));
+  }
+  else {
+    // Ex: Every 5 days - forever.
+    $count = t('- forever');
+  }
+
+  if (!empty($rrule_parts['until'])) {
+    // Ex: Daily until July 4, 1776.
+    $time = strtotime($rrule_parts['until']['datetime']);
+    $date = date($date_format, $time);
+    $count = t('until @date', array('@date' => $date));
+  }
+  return $count;
+}
+
+/**
+ * Parses the BYDAY array in the rrule.
+ */
+function rreadable_byday_handling($bydays) {
+  $by_text = '';
+  $count = count($bydays);
+  $i = 1;
+  foreach ($bydays as $k => $byday) {
+    // For the last item, add an and.
+    $by_text .= rreadable_by_connector_string($by_text, $i, $k, $count, 'on ');
+
+    $by_text .= rreadable_day_to_time($byday);
+    $i++;
+  }
+  return $by_text;
+}
+
+/**
+ * Parses the BYMONTH array in the rrule.
+ */
+function rreadable_bymonth_handling($bymonths) {
+  $by_text = '';
+  $count = count($bymonths);
+  $i = 1;
+  foreach ($bymonths as $k => $month) {
+    // For the first item, state "in" for months.
+    $by_text .= rreadable_by_connector_string($by_text, $i, $k, $count, 'in ');
+
+    $date = DateTime::createFromFormat('n', $month);
+    $by_text .= $date->format('F');
+    $i++;
+  }
+  return $by_text;
+}
+
+/**
+ * Parses the BYMONTHDAY array in the rrule.
+ */
+function rreadable_bymonthday_handling($bymonthdays) {
+  $by_text = rreadable_base_byno_handling($bymonthdays, 'day', 'month');
+  return $by_text;
+}
+
+/**
+ * Parses the BYYEARDAY array in the rrule.
+ */
+function rreadable_byyearday_handling($byyeardays) {
+  $by_text = rreadable_base_byno_handling($byyeardays, 'day', 'year');
+  return $by_text;
+}
+
+/**
+ * Parses the BYWEEKNO array in the rrule.
+ */
+function rreadable_byweekno_handling($byweeknos) {
+  $by_text = rreadable_base_byno_handling($byweeknos, 'week', 'year');
+  return $by_text;
+}
+
+/**
+ * Function to parse the base by number handling.
+ *
+ * Examples:
+ *  - 20th day of the month
+ *  - 5th week of the year
+ *
+ * @param array $bys
+ *   Provide array of strings representing the day.
+ * @param str $single
+ *   Unit of the whole: "day" in phrase "day of the week".
+ * @param str $group
+ *   Group containing the single: "week" in phrase "day of the week".
+ * @return str
+ *   Returns a string representing the single in the group.
+ */
+function rreadable_base_byno_handling($bys, $single = 'day', $group = 'week') {
+  $by_text = '';
+  $count = count($bys);
+  $i = 1;
+  foreach ($bys as $k => $by) {
+    $by_text .= rreadable_by_connector_string($by_text, $i, $k, $count);
+    // Print the number with the appropriate suffix.
+    $num = rreadable_suffix_handling($by);
+
+    $by_text .= $num;
+    $i++;
+  }
+  // If there is by text, state what single and the group it belongs to.
+  if (!empty($by_text)) {
+    $by_text .= " $single of the $group";
+  }
+  return $by_text;
+}
+
+/**
+ * Create a connector string for the BY properties.
+ *
+ * @param string  &$by_text
+ *   The by_text that is generated in the foreach loop.
+ * @param integer $i
+ *   The place in the count where the current text is.
+ * @param integer $k
+ *   The integer to check where in the array the processing in.
+ * @param integer $count
+ *   Total number of by items.
+ * @param string  $start_str
+ *   The text to precede the by text, "On the " in the phrase "On the 1st"
+ * @return [type]
+ *   Since the variable is passed by reference, by text is just altered.
+ */
+function rreadable_by_connector_string(&$by_text = '', $i = 1, $k = 0, $count = 0, $start_str = 'on the ') {
+
+  // If this is the first occurrence, add 'on the ' to the front of the string.
+  if ($i == 1) {
+    $by_text = $start_str;
+  }
+
+  // Middle items get a comma.
+  if ($i < $count && $k != 0) {
+    if ($count > 2) {
+      $by_text .= ', ';
+    }
+  }
+
+  // For the last item, add an "and".
+  if ($count == $i && $k != 0) {
+    // If the list is greater than 2, add an oxford comma.
+    if ($count > 2) {
+      $by_text .= ', and ';
+    }
+    if ($count == 2) {
+      $by_text .= ' and ';
+    }
+  }
+}
+
+/**
+ * Function to handle the negative numbers that may show up.
+ */
+function rreadable_suffix_handling($num) {
+  $text = '';
+  if (!empty($num)) {
+    $clean_num = str_replace('-', '', $num);
+    $suffix = rreadable_ordinal_suffix($clean_num);
+    if ($num[0] == '-') {
+      if ($clean_num == 1) {
+        // Represent the last day as `last` instead of 1st to last.
+        $clean_num = 'last';
+        $suffix = '';
+      }
+      else {
+        // If it is a negative number, it should be represented as 3rd to last.
+        $suffix .= ' to last';
+      }
+    }
+    $text = $clean_num . $suffix;
+  }
+  return $text;
+}
+
+/**
+ * Create an ordinal suffix for readability.
+ *
+ * From: http://stackoverflow.com/a/6604930/3230724
+ */
+function rreadable_ordinal_suffix($num){
+  $suffixes = array("st", "nd", "rd");
+  $last_digit = $num % 10;
+
+  if (($num < 20 && $num > 9) || $last_digit == 0 || $last_digit > 3) {
+    return "th";
+  }
+
+  return $suffixes[$last_digit - 1];
+}
