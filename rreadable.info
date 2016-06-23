@@ -1,0 +1,5 @@
+name = Rreadable Rrules
+description = Makes the rrule property readable.
+core = 7.x
+
+dependencies[] = date
